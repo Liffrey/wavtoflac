@@ -1,0 +1,10 @@
+.buildvenv/
+build/
+dist/
+__pycache__/
+*.py[cod]
+*.log
+*.csv
+ffmpeg.exe
+ffprobe.exe
+WavToFlac.spec

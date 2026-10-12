@@ -1,0 +1,83 @@
+WAV -> FLAC TOPLU DONUSTURUCU - EXE PAKETLEME REHBERI
+========================================================
+
+Bu klasorde su dosyalar var:
+  - wav_to_flac_converter.py   (uygulamanin kaynak kodu)
+  - build.bat                  (tek exe olusturma betigi)
+  - app_icon.ico                (uygulama/exe ikonu)
+  - OKUBENI.txt                (bu dosya)
+
+Onemli not: Tek dosya .exe'yi SADECE Windows uzerinde derleyebilirsiniz
+(PyInstaller Linux/Mac'ten Windows exe'si uretemez). Asagidaki adimlari
+Windows Server / Windows makinenizde uygulayin.
+
+ADIM 1 - Python kurulumu
+-------------------------
+Python 3.10 veya uzeri kurun: https://www.python.org/downloads/windows/
+Kurulum sirasinda "Add python.exe to PATH" kutucugunu isaretleyin.
+
+ADIM 2 - ffmpeg.exe temin edin
+-------------------------------
+https://www.gyan.dev/ffmpeg/builds/ adresinden "release essentials" zip'ini
+indirin. Zip'in icindeki bin\ffmpeg.exe VE bin\ffprobe.exe dosyalarinin
+IKISINI de bu klasore (build.bat ile AYNI klasore) kopyalayin.
+(ffprobe.exe, "Silmeden once dogrula" guvenlik ozelligi icin kullanilir;
+olmadan da uygulama calisir ama bu dogrulama ozelligi devre disi kalir.)
+
+ADIM 3 - Build
+---------------
+Bu klasorde build.bat dosyasina cift tiklayin (veya bir cmd penceresinde
+"build.bat" yazip calistirin). Betik:
+  - ".buildvenv" adinda IZOLE bir sanal ortam olusturur (sisteminizdeki
+    global Python kutuphanelerine HIC DOKUNMAZ)
+  - pyinstaller ve PySide6'yi SADECE bu sanal ortama kurar
+  - ffmpeg.exe ve app_icon.ico dosyalarini icine gomerek tek dosyalik
+    WavToFlac.exe uretir (exe simgesi de app_icon.ico olur)
+
+Sonuc: dist\WavToFlac.exe
+
+Build islemi bittikten sonra ".buildvenv" klasorunu silmek isterseniz
+sorun olmaz; sadece build sirasinda kullanilir, uretilen exe'nin
+calismasi icin gerekli degildir.
+
+UYGULAMA ICI YARDIM
+---------------------
+Uygulama acildiginda ust kisimda bir "Yardim" menusu bulunur:
+  - "Ayarlar Rehberi..." (veya F1): Her secenegin (paralel islem,
+    sikistirma seviyesi, surekli mod, dogrulama, log ayarlari vb.) ne ise
+    yaradigini detayli anlatan bir pencere acar.
+  - "Log Klasorunu Ac": Tam log dosyasinin bulundugu klasoru acar.
+  - "Hata Raporunu (CSV) Ac": Olusan tum hatalarin (dosya yolu, hata turu,
+    detay) satir satir kaydedildigi CSV dosyasini acar.
+  - "Hakkinda...": Kisa uygulama bilgisi gosterir.
+
+YENI GUVENLIK OZELLIKLERI
+---------------------------
+  - "Silmeden once FLAC'i dogrula": ffmpeg basarili dese bile, silmeden
+    once ffprobe ile WAV/FLAC surelerini karsilastirir. Uyusmazlik varsa
+    orijinal WAV SILINMEZ, hata olarak CSV'ye kaydedilir.
+  - "Orijinal zaman damgasini FLAC'a aktar": FLAC dosyasi, orijinal WAV'in
+    degistirilme tarihini tasir.
+  - Duraklat/Devam Et: Islemi tam durdurmadan gecici olarak beklet.
+  - Hiz / Tahmini kalan sure gostergesi: Ekranda anlik dosya/sn hizi ve
+    bilinen kuyruk icin kaba bir sure tahmini gorunur.
+  - Ayarlariniz (klasor, mod, gun, worker sayisi, sikistirma vb.) uygulama
+    kapatildiginda otomatik kaydedilir, bir sonraki acilista geri yuklenir.
+
+ADIM 4 - Dagitim
+-----------------
+dist\WavToFlac.exe dosyasini istediginiz sunucuya kopyalayip dogrudan
+calistirabilirsiniz. Ayrica ffmpeg kurmaniza veya PATH ayari yapmaniza
+gerek YOKTUR - ffmpeg exe'nin icine gomulmustur.
+
+NOTLAR
+------
+- --onefile modunda exe her acildiginda ffmpeg.exe'yi bir gecici klasore
+  cikarir (~1-2 saniyelik ekstra acilis suresi normaldir).
+- Eger exe boyutunu kucultmek veya acilis suresini kisaltmak isterseniz,
+  build.bat icindeki "--onefile" yerine "--onedir" kullanabilirsiniz;
+  bu durumda dist\WavToFlac\ klasorunun TAMAMINI (icindeki ffmpeg.exe
+  dahil tum dosyalari) birlikte tasimaniz gerekir.
+- Uygulama ici loglar: %USERPROFILE%\.wav2flac_logs\wav2flac.log
+  (donen/rotating log dosyasi, GUI'deki ekran log satiri sinirindan
+  bagimsiz olarak TUM kayitlari tutar).
