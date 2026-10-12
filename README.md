@@ -1,43 +1,43 @@
 # WAV to FLAC Converter
 
-Windows icin PySide6 tabanli toplu WAV -> FLAC donusturucusu. Buyuk klasorlerde dosya listesini bellekte biriktirmeden tarar ve donusturur. Istege bagli olarak FLAC dogrulamasi yapar ve yalnizca basarili donusumden sonra kaynak WAV dosyasini siler.
+A Windows desktop application for batch WAV-to-FLAC conversion, built with PySide6. It scans and converts large directory trees without keeping the full file list in memory. Optional FLAC verification helps ensure the source WAV is deleted only after a successful conversion.
 
-## Ozellikler
+## Features
 
-- Alt klasorleri tarayarak WAV dosyalarini bulma
-- Birden fazla `ffmpeg` islemiyle paralel donusturme
-- Tarih veya gun esigine gore tek seferlik ya da surekli tarama
-- Donusturme sonucunu `ffprobe` ile dogrulama
-- Istege bagli kaynak WAV silme ve zaman damgalarini koruma
-- Duraklatma, devam ettirme ve guvenli durdurma
-- Ayarlari kaydetme, sinirli GUI logu ve diske donen tam log
-- Windows icin PyInstaller ile tek EXE paketleme
+- Find WAV files in a directory and its subdirectories
+- Convert files in parallel using multiple `ffmpeg` processes
+- Run once or continuously, using a date or age threshold
+- Verify converted audio with `ffprobe`
+- Optionally delete source WAV files and preserve timestamps
+- Pause, resume, and safely stop conversion
+- Save application settings and write rotating logs to disk
+- Package as a single Windows executable with PyInstaller
 
-## Gereksinimler
+## Requirements
 
-- Python 3.10 veya uzeri
+- Python 3.10 or newer
 - `PySide6`
-- Gelistirme/komut satirindan calistirma icin `ffmpeg` PATH'te olmali veya uygulama dosyasinin yaninda bulunmali. Dogrulama ozelligi icin `ffprobe` da gereklidir.
+- For running from source, `ffmpeg` must be on `PATH` or beside the application. `ffprobe` is also needed for conversion verification.
 
-## Calistirma
+## Run from source
 
 ```powershell
 python -m pip install PySide6
 python wav_to_flac_converter.py
 ```
 
-## Windows EXE olusturma
+## Build the Windows executable
 
-1. Python 3.10+ kurun.
-2. Windows `ffmpeg.exe` ve `ffprobe.exe` dosyalarini `build.bat` ile ayni klasore koyun. Istege bagli olarak uygulama simgesi icin `app_icon.ico` dosyasini da ekleyin.
-3. `build.bat` dosyasini calistirin. Betik `.buildvenv` sanal ortamini olusturur ve PyInstaller ile `dist\WavToFlac.exe` dosyasini derler.
+1. Install Python 3.10 or newer.
+2. Place the Windows `ffmpeg.exe` and `ffprobe.exe` binaries beside `build.bat`. Optionally, place `app_icon.ico` there as well.
+3. Run `build.bat`. It creates an isolated `.buildvenv` environment and builds `dist\WavToFlac.exe` with PyInstaller.
 
-Derleme betigi ffmpeg ikililerini EXE'ye gomdugu icin, bu ikililer kaynak depoya eklenmez. Dagitimdan once kullandiginiz FFmpeg derlemesinin lisans ve dagitim kosullarini kontrol edin.
+The build script bundles the FFmpeg binaries into the executable, so they are intentionally excluded from this source repository. Review the license and redistribution terms of your FFmpeg build before distributing the executable.
 
-## Loglar
+## Logs
 
-Tam uygulama logu `%USERPROFILE%\.wav2flac_logs\wav2flac.log` konumuna yazilir. Ayrintili paketleme notlari icin [OKUBENI.txt](OKUBENI.txt) dosyasina bakin.
+The full application log is written to `%USERPROFILE%\.wav2flac_logs\wav2flac.log`. See [OKUBENI.txt](OKUBENI.txt) for additional packaging notes.
 
-## Lisans
+## License
 
-Lisans bilgisi icin [LICENSE](LICENSE) dosyasina bakin.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
