@@ -42,6 +42,7 @@ import sys
 import csv
 import time
 import wave
+import ctypes
 import queue
 import shutil
 import logging
@@ -53,7 +54,7 @@ from logging.handlers import RotatingFileHandler
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 SETTINGS_ORG = "BugraSysadminTools"
 SETTINGS_APP = "WavToFlacConverter"
 
@@ -141,6 +142,17 @@ def read_header_duration(path):
             return w.getnframes() / w.getframerate()
     except Exception:
         return None
+
+
+def csv_separator():
+    """Excel CSV'yi bolgesel ayarlardaki liste ayiriciyla boler (TR: ';', US: ',')."""
+    try:
+        buf = ctypes.create_unicode_buffer(4)
+        if ctypes.windll.kernel32.GetLocaleInfoEx(None, 0x0C, buf, 4) and len(buf.value) == 1:  # LOCALE_SLIST
+            return buf.value
+    except Exception:  # Windows disi
+        pass
+    return ";"
 
 
 def durations_match(d_src, d_dst):
@@ -265,13 +277,21 @@ class ConversionEngine(QtCore.QObject):
     # -------------------- hata CSV raporu --------------------
 
     def _open_error_csv(self):
-        log_dir = os.path.join(os.path.expanduser("~"), ".wav2flac_logs")
-        os.makedirs(log_dir, exist_ok=True)
-        self._csv_path = os.path.join(log_dir, "hatalar.csv")
-        is_new = not os.path.exists(self._csv_path) or os.path.getsize(self._csv_path) == 0
+        self._csv_path = self.get_error_csv_path()
+        os.makedirs(os.path.dirname(self._csv_path), exist_ok=True)
         try:
-            self._csv_file = open(self._csv_path, "a", newline="", encoding="utf-8")
-            self._csv_writer = csv.writer(self._csv_file)
+            is_new = not os.path.exists(self._csv_path) or os.path.getsize(self._csv_path) == 0
+            if not is_new:
+                with open(self._csv_path, "rb") as f:
+                    old_format = f.read(3) != b"\xef\xbb\xbf"
+                if old_format:
+                    # v1.1.1 ve oncesi: BOM'suz + virgullu -> Excel'de tek sutun ve bozuk
+                    # Turkce karakter. Karisik dosya olmasin diye bir kez kenara al.
+                    os.replace(self._csv_path, self._csv_path[:-4] + "_eski.csv")
+                    is_new = True
+            # utf-8-sig: BOM yalnizca bos dosyaya yazilir; Excel onunla UTF-8 oldugunu anlar.
+            self._csv_file = open(self._csv_path, "a", newline="", encoding="utf-8-sig")
+            self._csv_writer = csv.writer(self._csv_file, delimiter=csv_separator())
             if is_new:
                 self._csv_writer.writerow(["Tarih_Saat", "Dosya_Yolu", "Hata_Turu", "Detay"])
                 self._csv_file.flush()
@@ -731,6 +751,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ui_timer.setInterval(250)
         self.ui_timer.timeout.connect(self._flush_ui)
         self.ui_timer.start()
+        self._flush_ui()  # sayac etiketini ilk tick'i beklemeden doldur
 
         self._check_ffmpeg()
         self._check_ffprobe()
@@ -984,6 +1005,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # --- Baslat / Durdur / Duraklat ---
         btn_row = QtWidgets.QHBoxLayout()
         self.start_btn = QtWidgets.QPushButton("Başlat")
+        self.start_btn.setDefault(True)  # Windows 11 stilinde vurgu renginde ana buton
         self.start_btn.clicked.connect(self._on_start)
         self.pause_btn = QtWidgets.QPushButton("Duraklat")
         self.pause_btn.clicked.connect(self._on_pause_toggle)
@@ -997,7 +1019,12 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addLayout(btn_row)
 
         # --- Istatistikler ---
-        self.stats_label = QtWidgets.QLabel("Taranan: 0   Dönüştürülen: 0   Atlanan: 0   Hata: 0")
+        self.stats_label = QtWidgets.QLabel()  # metni _flush_ui yazar
+        self.stats_label.setTextFormat(QtCore.Qt.RichText)
+        font = self.stats_label.font()
+        font.setPointSizeF(font.pointSizeF() + 1.5)
+        font.setBold(True)
+        self.stats_label.setFont(font)
         layout.addWidget(self.stats_label)
 
         self.speed_label = QtWidgets.QLabel("")
@@ -1192,9 +1219,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Calisma bittikten sonra da guncelle; yoksa son 250ms'lik sayimlar ekranda eksik kalir.
         c = self.engine.snapshot_counters()
+        sep = "&nbsp;" * 4
+        errors = f"Hata: {c['errors']}"
+        if c["errors"]:
+            errors = f"<span style='color:#e5534b'>{errors}</span>"
         self.stats_label.setText(
-            f"Taranan: {c['scanned']}   Dönüştürülen: {c['converted']}   "
-            f"Atlanan: {c['skipped']}   Hata: {c['errors']}"
+            f"Taranan: {c['scanned']}{sep}Dönüştürülen: {c['converted']}{sep}"
+            f"Atlanan: {c['skipped']}{sep}{errors}"
         )
 
         if self.engine.is_running():

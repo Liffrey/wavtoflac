@@ -1,4 +1,5 @@
 """Calistirma: python -m unittest test_wav_to_flac  (ffmpeg gerekir; yoksa ilgili testler atlanir)"""
+import csv
 import logging
 import os
 import struct
@@ -6,7 +7,7 @@ import tempfile
 import unittest
 import wave
 
-from wav_to_flac_converter import ConversionEngine, find_tool, read_header_duration
+from wav_to_flac_converter import ConversionEngine, csv_separator, find_tool, read_header_duration
 
 FFMPEG = find_tool("ffmpeg")
 
@@ -34,6 +35,26 @@ class Tests(unittest.TestCase):
         e.ffprobe_path = find_tool("ffprobe")
         e.delete_original = True
         return e
+
+    def test_error_csv_excel_format(self):
+        path = os.path.join(self.tmp.name, "hatalar.csv")
+        with open(path, "w", encoding="utf-8") as f:  # v1.1.1 bicimi: BOM'suz, virgullu
+            f.write("Tarih_Saat,Dosya_Yolu,Hata_Turu,Detay\r\n")
+        e = self.engine()
+        for _ in range(2):  # ikinci acilis eklemeli, ikinci BOM yazmamali
+            e._csv_path = path
+            e._open_error_csv()
+            e._write_error_csv(r"C:\kayıtlar\görüşme.wav", "test", "çğış")
+            e._close_error_csv()
+        self.assertTrue(os.path.exists(os.path.join(self.tmp.name, "hatalar_eski.csv")))
+        with open(path, "rb") as f:
+            raw = f.read()
+        self.assertTrue(raw.startswith(b"\xef\xbb\xbf"))
+        self.assertEqual(raw.count(b"\xef\xbb\xbf"), 1)
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.reader(f, delimiter=csv_separator()))
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[1][1:], [r"C:\kayıtlar\görüşme.wav", "test", "çğış"])
 
     def test_wav_header_duration(self):
         make_wav(self.wav)

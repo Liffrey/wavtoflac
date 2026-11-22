@@ -4,6 +4,8 @@ WAV -> FLAC TOPLU DONUSTURUCU - EXE PAKETLEME REHBERI
 Bu klasorde su dosyalar var:
   - wav_to_flac_converter.py   (uygulamanin kaynak kodu)
   - build.bat                  (tek exe olusturma betigi)
+  - make_version_file.py       (build.bat cagirir; exe surum bilgisini uretir)
+  - test_wav_to_flac.py        (testler: python -m unittest test_wav_to_flac)
   - app_icon.ico                (uygulama/exe ikonu)
   - OKUBENI.txt                (bu dosya)
 

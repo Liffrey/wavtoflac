@@ -96,10 +96,20 @@ if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
 if exist WavToFlac.spec del /q WavToFlac.spec
 
+REM exe'nin Ozellikler > Ayrintilar surum bilgisi, koddaki APP_VERSION'dan uretilir
+mkdir build
+"%VENV_PY%" make_version_file.py build\version_info.txt
+if errorlevel 1 (
+    echo HATA: Surum bilgisi dosyasi uretilemedi.
+    pause
+    exit /b 1
+)
+
 echo [5/5] Tek dosya exe olusturuluyor (ffmpeg.exe ve ikon gomuluyor)...
 if exist app_icon.ico (
     "%VENV_PY%" -m PyInstaller --noconfirm --onefile --windowed ^
         --name WavToFlac ^
+        --version-file "build\version_info.txt" ^
         --icon "app_icon.ico" ^
         --add-binary "ffmpeg.exe;." ^
         --add-binary "ffprobe.exe;." ^
@@ -108,6 +118,7 @@ if exist app_icon.ico (
 ) else (
     "%VENV_PY%" -m PyInstaller --noconfirm --onefile --windowed ^
         --name WavToFlac ^
+        --version-file "build\version_info.txt" ^
         --add-binary "ffmpeg.exe;." ^
         --add-binary "ffprobe.exe;." ^
         wav_to_flac_converter.py
