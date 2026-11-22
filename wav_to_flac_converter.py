@@ -41,6 +41,7 @@ import os
 import sys
 import csv
 import time
+import wave
 import queue
 import shutil
 import logging
@@ -52,60 +53,24 @@ from logging.handlers import RotatingFileHandler
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+APP_VERSION = "1.1.0"
 SETTINGS_ORG = "BugraSysadminTools"
 SETTINGS_APP = "WavToFlacConverter"
+
+# --windowed exe'nin konsolu yok; bayraksiz Windows her ffmpeg/ffprobe icin yeni
+# konsol (cmd penceresi + conhost.exe) acar. CREATE_NO_WINDOW pencereyi gizler ama
+# conhost.exe yine olusur; DETACHED_PROCESS hic konsol olusturmaz (stdio pipe'lari calisir).
+NO_WINDOW = subprocess.DETACHED_PROCESS if os.name == "nt" else 0
 
 
 # --------------------------------------------------------------------------
 # ffmpeg konumunu bul (PyInstaller ile gomulmus onefile/onedir exe destegi)
 # --------------------------------------------------------------------------
 
-def get_ffmpeg_path():
-    """ffmpeg calistirilabilirini su sirayla arar:
-    1) PyInstaller onefile exe icinde gomulu oldugu gecici klasor (_MEIPASS)
-    2) PyInstaller onedir exe'nin bulundugu klasor
-    3) Bu script'in bulundugu klasor (gelistirme ortami)
-    4) Sistem PATH'i
-    Bulunamazsa None doner."""
-    ffmpeg_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
-
-    candidates = []
-    if getattr(sys, "frozen", False):
-        meipass = getattr(sys, "_MEIPASS", None)
-        if meipass:
-            candidates.append(os.path.join(meipass, ffmpeg_name))
-        candidates.append(os.path.join(os.path.dirname(sys.executable), ffmpeg_name))
-    else:
-        here = os.path.dirname(os.path.abspath(__file__))
-        candidates.append(os.path.join(here, ffmpeg_name))
-
-    for c in candidates:
-        if os.path.isfile(c):
-            return c
-
-    return shutil.which("ffmpeg")
-
-
-def get_ffprobe_path():
-    """ffprobe calistirilabilirini get_ffmpeg_path ile ayni mantikla arar.
-    ffprobe, ffmpeg ile ayni klasorde gelir (ayni zip/build icinde)."""
-    ffprobe_name = "ffprobe.exe" if os.name == "nt" else "ffprobe"
-
-    candidates = []
-    if getattr(sys, "frozen", False):
-        meipass = getattr(sys, "_MEIPASS", None)
-        if meipass:
-            candidates.append(os.path.join(meipass, ffprobe_name))
-        candidates.append(os.path.join(os.path.dirname(sys.executable), ffprobe_name))
-    else:
-        here = os.path.dirname(os.path.abspath(__file__))
-        candidates.append(os.path.join(here, ffprobe_name))
-
-    for c in candidates:
-        if os.path.isfile(c):
-            return c
-
-    return shutil.which("ffprobe")
+def find_tool(name):
+    """ffmpeg/ffprobe'u once exe/script yaninda (veya _MEIPASS icinde),
+    sonra PATH'te arar. Bulunamazsa None doner."""
+    return get_resource_path(name + (".exe" if os.name == "nt" else "")) or shutil.which(name)
 
 
 def get_resource_path(filename):
@@ -161,6 +126,29 @@ def iter_wav_entries(root, recursive, stop_event):
             continue
 
 
+def read_header_duration(path):
+    """PCM WAV / FLAC suresini dosya basligindan okur (ffprobe process'i
+    acmadan). Okunamazsa (orn. u-law WAV, RF64) None doner."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(26)
+        if len(head) == 26 and head[:4] == b"fLaC" and head[4] & 0x7F == 0:
+            # STREAMINFO: 20 bit ornekleme hizi | 3+5 bit | 36 bit toplam ornek
+            x = int.from_bytes(head[18:26], "big")
+            rate, total = x >> 44, x & 0xFFFFFFFFF
+            return total / rate if rate and total else None
+        with wave.open(path, "rb") as w:
+            return w.getnframes() / w.getframerate()
+    except Exception:
+        return None
+
+
+def durations_match(d_src, d_dst):
+    if d_src is None or d_dst is None:
+        return False
+    return abs(d_src - d_dst) <= max(0.05, d_src * 0.001)  # 50ms veya binde bir
+
+
 # --------------------------------------------------------------------------
 # Donusturme motoru
 # --------------------------------------------------------------------------
@@ -171,9 +159,7 @@ class ConversionEngine(QtCore.QObject):
     fakat agir islem asla GUI thread'inde calismaz."""
 
     pass_started = QtCore.Signal(str)      # cutoff aciklamasi
-    pass_finished = QtCore.Signal()
     all_finished = QtCore.Signal()
-    stats_changed = QtCore.Signal(dict)    # periyodik ozet (ana thread'den okunur)
 
     def __init__(self, logger):
         super().__init__()
@@ -207,8 +193,6 @@ class ConversionEngine(QtCore.QObject):
         self._log_buffer = []
         self._counters = {"scanned": 0, "converted": 0, "skipped": 0, "errors": 0}
         self._last_milestone = 0
-
-        self.current_pass_start_ts = None
 
         # Hata CSV raporu
         self._csv_lock = threading.Lock()
@@ -334,6 +318,7 @@ class ConversionEngine(QtCore.QObject):
                 [self.ffprobe_path, "-v", "error", "-show_entries", "format=duration",
                  "-of", "csv=p=0", path],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30,
+                creationflags=NO_WINDOW,
             )
             text = result.stdout.decode("utf-8", errors="ignore").strip()
             if not text:
@@ -346,16 +331,11 @@ class ConversionEngine(QtCore.QObject):
         """WAV ve FLAC surelerini karsilastirir. Esit degilse (toleransin
         disinda) False doner; boylece bozuk/eksik bir donusturme, orijinal
         WAV silinmeden once yakalanmis olur."""
-        if not self.ffprobe_path:
-            # ffprobe yoksa dogrulama fiziken yapilamaz; baslangicta zaten
-            # uyarilmis olur, burada islemi durdurmamak icin gecerli sayilir.
+        # Hizli yol: basliklar uyusuyorsa dosya basina 2 ffprobe process'i acilmaz.
+        # Uyusmazsa/okunamazsa eski davranis: ffprobe karar verir.
+        if durations_match(read_header_duration(src_path), read_header_duration(dst_path)):
             return True
-        d_src = self._get_duration(src_path)
-        d_dst = self._get_duration(dst_path)
-        if d_src is None or d_dst is None:
-            return False
-        tolerance = max(0.05, d_src * 0.001)  # 50ms veya binde bir, hangisi buyukse
-        return abs(d_src - d_dst) <= tolerance
+        return durations_match(self._get_duration(src_path), self._get_duration(dst_path))
 
     def _maybe_log_milestone(self):
         """Verbose kapali olsa bile 'kac dosya donusturuldu' bilgisini
@@ -387,18 +367,22 @@ class ConversionEngine(QtCore.QObject):
             self._maybe_log_milestone()
             return
 
+        # Once gecici dosyaya yaz, basarida yeniden adlandir: program/ffmpeg yarida
+        # kesilirse yarim .flac kalmaz (yoksa sonraki tur onu "zaten var" diye atlardi).
+        tmp_path = dst_path + ".tmp"
         ffmpeg_bin = self.ffmpeg_path or "ffmpeg"
         cmd = [
             ffmpeg_bin, "-y", "-nostdin", "-loglevel", "error",
             "-i", src_path,
             "-c:a", "flac", "-compression_level", str(self.compression_level),
-            dst_path,
+            "-f", "flac", tmp_path,
         ]
         try:
             result = subprocess.run(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
+                creationflags=NO_WINDOW,
             )
         except FileNotFoundError:
             self._inc("errors")
@@ -415,7 +399,7 @@ class ConversionEngine(QtCore.QObject):
             return
 
         conversion_ok = (
-            result.returncode == 0 and os.path.exists(dst_path) and os.path.getsize(dst_path) > 0
+            result.returncode == 0 and os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0
         )
 
         if not conversion_ok:
@@ -424,9 +408,9 @@ class ConversionEngine(QtCore.QObject):
             # hatalar verbose ayarindan bagimsiz olarak her zaman gosterilir
             self._log(f"HATA: {src_path} - {err[:300]}")
             self._write_error_csv(src_path, "donusturme_hatasi", err[:500])
-            if os.path.exists(dst_path):
+            if os.path.exists(tmp_path):
                 try:
-                    os.remove(dst_path)
+                    os.remove(tmp_path)
                 except OSError:
                     pass
             self._maybe_log_milestone()
@@ -438,7 +422,7 @@ class ConversionEngine(QtCore.QObject):
         # gecerli bir FLAC'in sinirda bir sure farkiyla bosuna silinmesini engeller.
         verified_ok = True
         if self.delete_original and self.verify_before_delete:
-            verified_ok = self._verify_conversion(src_path, dst_path)
+            verified_ok = self._verify_conversion(src_path, tmp_path)
 
         if not verified_ok:
             self._inc("errors")
@@ -447,15 +431,17 @@ class ConversionEngine(QtCore.QObject):
                 src_path, "dogrulama_hatasi",
                 "FLAC suresi WAV ile eslesmiyor; olusturulan FLAC silindi, orijinal WAV korundu."
             )
-            if os.path.exists(dst_path):
+            if os.path.exists(tmp_path):
                 try:
-                    os.remove(dst_path)
+                    os.remove(tmp_path)
                 except OSError:
                     pass
             self._maybe_log_milestone()
             return
 
-        # basarili + (varsa) dogrulandi
+        # basarili + (varsa) dogrulandi. Hata olursa worker'in guvenlik agi
+        # yakalar; WAV henuz silinmedigi icin veri kaybi olmaz.
+        os.replace(tmp_path, dst_path)
         self._inc("converted")
 
         if self.preserve_timestamps:
@@ -540,7 +526,6 @@ class ConversionEngine(QtCore.QObject):
                 cutoff_ts = self._compute_cutoff_ts()
                 cutoff_str = datetime.fromtimestamp(cutoff_ts).strftime("%Y-%m-%d %H:%M")
                 self.reset_counters()
-                self.current_pass_start_ts = time.time()
                 self.pass_started.emit(cutoff_str)
                 self._log(f"Tarama basladi. Esik tarih: {cutoff_str} (bu tarihten eski dosyalar donusturulecek)")
 
@@ -566,16 +551,12 @@ class ConversionEngine(QtCore.QObject):
                     f"TUR TAMAMLANDI. Taranan: {c['scanned']}  Donusturulen: {c['converted']}  "
                     f"Atlanan: {c['skipped']}  Hata: {c['errors']}"
                 )
-                self.pass_finished.emit()
 
                 if not self.continuous or self.stop_event.is_set():
                     break
 
                 self._log(f"Sonraki tur icin {self.interval_minutes} dakika bekleniyor...")
-                waited = 0
-                while waited < self.interval_minutes * 60 and not self.stop_event.is_set():
-                    time.sleep(1)
-                    waited += 1
+                self.stop_event.wait(self.interval_minutes * 60)  # Durdur'da aninda uyanir
         except Exception as e:
             # Kritik guvenlik agi: --windowed olarak paketlenmis exe'de konsol
             # OLMADIGI icin yakalanmayan bir exception hicbir yerde gorunmeden
@@ -692,8 +673,9 @@ acabilirsiniz.</p>
 <p><b>SADECE "Kaynak (orijinal) WAV dosyalarini sil" isaretliyken etkilidir</b>
 (diger durumda kutucuk otomatik olarak devre disi/gri gorunur, cunku
 zaten silinecek bir sey yoktur). Isaretliyse, ffmpeg basariyla bitse bile
-silme islemi hemen yapilmaz: program <b>ffprobe</b> ile WAV ve olusan
-FLAC dosyalarinin sureleri karsilastirir. Sureler uyusmuyorsa (bozuk/eksik
+silme islemi hemen yapilmaz: program WAV ve olusan FLAC dosyalarinin
+surelerini once dosya basliklarindan (hizli), gerekirse <b>ffprobe</b> ile
+karsilastirir. Sureler uyusmuyorsa (bozuk/eksik
 donusturme durumu), olusan hatali FLAC dosyasi silinir, <b>orijinal WAV
 korunur</b> ve durum hata olarak kaydedilir. Bu, geri donusu olmayan veri
 kaybina karsi ek bir guvenlik katmanidir. ffprobe bulunamazsa bu ozellik
@@ -744,7 +726,7 @@ islemi yapmaniza gerek yoktur.</p>
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WAV -> FLAC Toplu Donusturucu")
+        self.setWindowTitle(f"WAV -> FLAC Toplu Donusturucu v{APP_VERSION}")
         self.setMinimumWidth(620)
 
         icon_path = get_resource_path("app_icon.ico")
@@ -754,7 +736,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.logger = self._build_logger()
         self.engine = ConversionEngine(self.logger)
         self.engine.pass_started.connect(self._on_pass_started)
-        self.engine.pass_finished.connect(self._on_pass_finished)
         self.engine.all_finished.connect(self._on_all_finished)
 
         self._rate_samples = deque(maxlen=20)  # (zaman, islenen_sayisi) - hiz/ETA hesabi icin
@@ -820,7 +801,7 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QMessageBox.about(
             self,
             "Hakkinda",
-            "<b>WAV &rarr; FLAC Toplu Donusturucu</b><br><br>"
+            f"<b>WAV &rarr; FLAC Toplu Donusturucu</b><br>Surum {APP_VERSION}<br><br>"
             "Buyuk hacimli WAV arsivlerini kayipsiz FLAC formatina donusturmek "
             "icin RAM ve hiz odakli tasarlanmis bir arac. Bugra <br><br>"
             "Donusturme motoru: ffmpeg",
@@ -866,7 +847,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---------------- ffmpeg kontrolu ----------------
 
     def _check_ffmpeg(self):
-        path = get_ffmpeg_path()
+        path = find_tool("ffmpeg")
         self.engine.ffmpeg_path = path
         if path is None:
             self._append_startup_log("UYARI: ffmpeg bulunamadi. Donusturme islemi calismayacaktir.")
@@ -882,7 +863,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._append_startup_log(f"ffmpeg bulundu: {path}")
 
     def _check_ffprobe(self):
-        path = get_ffprobe_path()
+        path = find_tool("ffprobe")
         self.engine.ffprobe_path = path
         if path is None:
             self._append_startup_log(
@@ -1156,7 +1137,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not root or not os.path.isdir(root):
             QtWidgets.QMessageBox.warning(self, "Gecersiz klasor", "Lutfen gecerli bir klasor secin.")
             return
-        ffmpeg_path = get_ffmpeg_path()
+        ffmpeg_path = find_tool("ffmpeg")
         if ffmpeg_path is None:
             QtWidgets.QMessageBox.critical(self, "ffmpeg bulunamadi", "ffmpeg (gomulu veya PATH'te) bulunamadi.")
             return
@@ -1164,7 +1145,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Dogrulama sadece silme acikken anlamlidir (engine tarafinda da ayni
         # kural uygulanir); silme kapaliyken gereksiz ffprobe uyarisi cikmasin.
         verify_requested = self.verify_chk.isChecked() and self.delete_chk.isChecked()
-        ffprobe_path = get_ffprobe_path()
+        ffprobe_path = find_tool("ffprobe")
         if verify_requested and ffprobe_path is None:
             resp = QtWidgets.QMessageBox.warning(
                 self, "ffprobe bulunamadi",
@@ -1245,10 +1226,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._rate_samples.clear()
 
     @QtCore.Slot()
-    def _on_pass_finished(self):
-        pass
-
-    @QtCore.Slot()
     def _on_all_finished(self):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
@@ -1268,13 +1245,14 @@ class MainWindow(QtWidgets.QMainWindow):
             # tek seferde toplu ekle (her satir icin ayri repaint yerine)
             self.log_view.appendPlainText("\n".join(buf))
 
-        if self.engine.is_running():
-            c = self.engine.snapshot_counters()
-            self.stats_label.setText(
-                f"Taranan: {c['scanned']}   Donusturulen: {c['converted']}   "
-                f"Atlanan: {c['skipped']}   Hata: {c['errors']}"
-            )
+        # Calisma bittikten sonra da guncelle; yoksa son 250ms'lik sayimlar ekranda eksik kalir.
+        c = self.engine.snapshot_counters()
+        self.stats_label.setText(
+            f"Taranan: {c['scanned']}   Donusturulen: {c['converted']}   "
+            f"Atlanan: {c['skipped']}   Hata: {c['errors']}"
+        )
 
+        if self.engine.is_running():
             processed = c["converted"] + c["skipped"] + c["errors"]
             now = time.time()
             self._rate_samples.append((now, processed))

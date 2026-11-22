@@ -53,9 +53,13 @@ if errorlevel 1 (
 )
 
 echo [1/5] Izole sanal ortam olusturuluyor (%VENV_DIR%)...
-if exist "%VENV_DIR%" (
+REM Sadece klasorun varligina bakmak yetmez: venv'i olusturan Python silinmis/tasinmissa
+REM venv bozuktur ("No Python at ..."). Calismiyorsa silip yeniden olustur.
+"%VENV_DIR%\Scripts\python.exe" -c "" >nul 2>nul
+if not errorlevel 1 (
     echo       Mevcut sanal ortam bulundu, yeniden kullaniliyor.
 ) else (
+    if exist "%VENV_DIR%" rmdir /s /q "%VENV_DIR%"
     python -m venv "%VENV_DIR%"
     if errorlevel 1 (
         echo HATA: Sanal ortam olusturulamadi.
@@ -101,6 +105,7 @@ if exist app_icon.ico (
     "%VENV_PY%" -m PyInstaller --noconfirm --onefile --windowed ^
         --name WavToFlac ^
         --add-binary "ffmpeg.exe;." ^
+        --add-binary "ffprobe.exe;." ^
         wav_to_flac_converter.py
 )
 
