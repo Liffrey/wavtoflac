@@ -14,15 +14,15 @@ Windows Server / Windows makinenizde uygulayin.
 ADIM 1 - Python kurulumu
 -------------------------
 Python 3.10 veya uzeri kurun: https://www.python.org/downloads/windows/
-Kurulum sirasinda "Add python.exe to PATH" kutucugunu isaretleyin.
+PATH'e eklemek gerekmez; build.bat Python'u "py" launcher'i ile bulur.
 
 ADIM 2 - ffmpeg.exe temin edin
 -------------------------------
 https://www.gyan.dev/ffmpeg/builds/ adresinden "release essentials" zip'ini
 indirin. Zip'in icindeki bin\ffmpeg.exe VE bin\ffprobe.exe dosyalarinin
 IKISINI de bu klasore (build.bat ile AYNI klasore) kopyalayin.
-(ffprobe.exe, "Silmeden once dogrula" guvenlik ozelligi icin kullanilir;
-olmadan da uygulama calisir ama bu dogrulama ozelligi devre disi kalir.)
+(ffprobe.exe, silmeden once dogrulamada basligi dogrudan okunamayan WAV'lar
+(orn. u-law) icin kullanilir; yoksa bu dosyalar dogrulanamaz ve silinmez.)
 
 ADIM 3 - Build
 ---------------
@@ -53,9 +53,10 @@ Uygulama acildiginda ust kisimda bir "Yardim" menusu bulunur:
 
 YENI GUVENLIK OZELLIKLERI
 ---------------------------
-  - "Silmeden once FLAC'i dogrula": ffmpeg basarili dese bile, silmeden
-    once ffprobe ile WAV/FLAC surelerini karsilastirir. Uyusmazlik varsa
-    orijinal WAV SILINMEZ, hata olarak CSV'ye kaydedilir.
+  - Silmeden once dogrulama: silme aciksa her FLAC, WAV ile sure
+    karsilastirilarak dogrulanir (once dosya basligindan, gerekirse ffprobe
+    ile). Uyusmazlik varsa orijinal WAV SILINMEZ, hata olarak CSV'ye
+    kaydedilir. Silme secili iken Baslat'a basildiginda ayrica onay istenir.
   - "Orijinal zaman damgasini FLAC'a aktar": FLAC dosyasi, orijinal WAV'in
     degistirilme tarihini tasir.
   - Duraklat/Devam Et: Islemi tam durdurmadan gecici olarak beklet.

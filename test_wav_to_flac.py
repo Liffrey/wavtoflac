@@ -33,7 +33,6 @@ class Tests(unittest.TestCase):
         e.ffmpeg_path = FFMPEG
         e.ffprobe_path = find_tool("ffprobe")
         e.delete_original = True
-        e.verify_before_delete = True
         return e
 
     def test_wav_header_duration(self):

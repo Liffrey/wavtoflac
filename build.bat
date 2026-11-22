@@ -9,7 +9,7 @@ REM ============================================================
 REM
 REM ONCEDEN YAPILMASI GEREKENLER:
 REM   1) Windows'a Python 3.10+ kurun: https://www.python.org/downloads/windows/
-REM      (Kurulumda "Add python.exe to PATH" secilmis olmali)
+REM      (PATH'e eklemek GEREKMEZ; betik "py" launcher'i kullanir)
 REM   2) Windows icin ffmpeg.exe indirin:
 REM        https://www.gyan.dev/ffmpeg/builds/  ("release essentials" yeterli)
 REM      Indirdiginiz zip icindeki bin\ffmpeg.exe dosyasini bu klasore
@@ -44,10 +44,14 @@ if not exist wav_to_flac_converter.py (
     exit /b 1
 )
 
-where python >nul 2>nul
-if errorlevel 1 (
-    echo HATA: "python" komutu bulunamadi. Python kurulu ve PATH'e ekli oldugundan
-    echo emin olun: https://www.python.org/downloads/windows/
+REM Python'u bul: once py launcher (PATH gerektirmez), yoksa PATH'teki python.
+REM "where python" yetmez: Microsoft Store'un sahte python.exe kisayolunu da bulur.
+set "PY_CMD="
+py -3 -c "" >nul 2>nul && set "PY_CMD=py -3"
+if not defined PY_CMD python -c "" >nul 2>nul && set "PY_CMD=python"
+if not defined PY_CMD (
+    echo HATA: Python bulunamadi. python.org kurulumuyla gelen "py" launcher'i
+    echo veya PATH'te calisan bir python gerekli: https://www.python.org/downloads/windows/
     pause
     exit /b 1
 )
@@ -60,7 +64,7 @@ if not errorlevel 1 (
     echo       Mevcut sanal ortam bulundu, yeniden kullaniliyor.
 ) else (
     if exist "%VENV_DIR%" rmdir /s /q "%VENV_DIR%"
-    python -m venv "%VENV_DIR%"
+    %PY_CMD% -m venv "%VENV_DIR%"
     if errorlevel 1 (
         echo HATA: Sanal ortam olusturulamadi.
         pause

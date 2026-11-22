@@ -53,7 +53,7 @@ from logging.handlers import RotatingFileHandler
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 SETTINGS_ORG = "BugraSysadminTools"
 SETTINGS_APP = "WavToFlacConverter"
 
@@ -178,7 +178,6 @@ class ConversionEngine(QtCore.QObject):
         self.ffprobe_path = None
 
         # Guvenlik / butunluk ayarlari
-        self.verify_before_delete = True   # ffprobe ile sure karsilastirmasi
         self.preserve_timestamps = True    # orijinal mtime/atime'i FLAC'a aktar
 
         # Loglama ayarlari
@@ -214,11 +213,11 @@ class ConversionEngine(QtCore.QObject):
 
     def pause(self):
         self.pause_event.set()
-        self._log("DURAKLATILDI (calisan islemler bitirilip yeni dosya alinmiyor).")
+        self._log("DURAKLATILDI (çalışan işlemler bitiriliyor, yeni dosya alınmıyor).")
 
     def resume(self):
         self.pause_event.clear()
-        self._log("DEVAM EDILIYOR.")
+        self._log("DEVAM EDİLİYOR.")
 
     def is_paused(self):
         return self.pause_event.is_set()
@@ -277,7 +276,7 @@ class ConversionEngine(QtCore.QObject):
                 self._csv_writer.writerow(["Tarih_Saat", "Dosya_Yolu", "Hata_Turu", "Detay"])
                 self._csv_file.flush()
         except OSError as e:
-            self._log(f"HATA CSV DOSYASI ACILAMADI: {e}")
+            self._log(f"HATA CSV DOSYASI AÇILAMADI: {e}")
             self._csv_file = None
             self._csv_writer = None
 
@@ -351,7 +350,7 @@ class ConversionEngine(QtCore.QObject):
                 counters_copy = dict(self._counters)
         if should_log:
             self._log(
-                f"OZET -> Taranan: {counters_copy['scanned']}  Donusturulen: {counters_copy['converted']}  "
+                f"ÖZET -> Taranan: {counters_copy['scanned']}  Dönüştürülen: {counters_copy['converted']}  "
                 f"Atlanan: {counters_copy['skipped']}  Hata: {counters_copy['errors']}"
             )
 
@@ -386,7 +385,7 @@ class ConversionEngine(QtCore.QObject):
             )
         except FileNotFoundError:
             self._inc("errors")
-            self._log("HATA: ffmpeg bulunamadi. PATH ayarlarini veya ffmpeg.exe konumunu kontrol edin.")
+            self._log("HATA: ffmpeg bulunamadı. ffmpeg.exe konumunu veya PATH ayarlarını kontrol edin.")
             self._write_error_csv(src_path, "ffmpeg_bulunamadi", "ffmpeg calistirilamadi")
             self.stop_event.set()
             self._maybe_log_milestone()
@@ -416,17 +415,15 @@ class ConversionEngine(QtCore.QObject):
             self._maybe_log_milestone()
             return
 
-        # ffmpeg basariyla bitti. Dogrulama SADECE orijinal silinecekse anlamlidir
-        # (amaci, silmeden once bozuk bir donusturmeyi yakalamaktir); silme kapaliysa
-        # dogrulamayi calistirmiyoruz - hem gereksiz ffprobe yukunu onler hem de
-        # gecerli bir FLAC'in sinirda bir sure farkiyla bosuna silinmesini engeller.
+        # ffmpeg basariyla bitti. Dogrulama SADECE orijinal silinecekse yapilir ve
+        # o durumda her zaman yapilir (basliktan okundugu icin maliyeti yok denecek kadar az).
         verified_ok = True
-        if self.delete_original and self.verify_before_delete:
+        if self.delete_original:
             verified_ok = self._verify_conversion(src_path, tmp_path)
 
         if not verified_ok:
             self._inc("errors")
-            self._log(f"DOGRULAMA HATASI (sure uyusmuyor, silinmedi): {src_path}")
+            self._log(f"DOĞRULAMA HATASI (süre uyuşmuyor, silinmedi): {src_path}")
             self._write_error_csv(
                 src_path, "dogrulama_hatasi",
                 "FLAC suresi WAV ile eslesmiyor; olusturulan FLAC silindi, orijinal WAV korundu."
@@ -453,16 +450,16 @@ class ConversionEngine(QtCore.QObject):
                 self._write_error_csv(dst_path, "zaman_damgasi_hatasi", str(e))
 
         if self.verbose_file_log:
-            self._log(f"DONUSTURULDU: {src_path}")
+            self._log(f"DÖNÜŞTÜRÜLDÜ: {src_path}")
 
         if self.delete_original:
             try:
                 os.remove(src_path)
                 if self.verbose_file_log:
-                    self._log(f"SILINDI (orijinal): {src_path}")
+                    self._log(f"SİLİNDİ (orijinal): {src_path}")
             except OSError as e:
                 # silme hatasi onemli - verbose kapali olsa da her zaman goster
-                self._log(f"SILME HATASI: {src_path} - {e}")
+                self._log(f"SİLME HATASI: {src_path} - {e}")
                 self._write_error_csv(src_path, "silme_hatasi", str(e))
 
         self._maybe_log_milestone()
@@ -490,7 +487,7 @@ class ConversionEngine(QtCore.QObject):
                     self._convert_one(item)
                 except Exception as e:
                     self._inc("errors")
-                    self._log(f"BEKLENMEYEN IC HATA (worker cokmedi, devam ediyor): {item} - {e}")
+                    self._log(f"BEKLENMEYEN İÇ HATA (worker çökmedi, devam ediyor): {item} - {e}")
                     self._write_error_csv(item, "beklenmeyen_ic_hata", str(e))
                     self._maybe_log_milestone()
             finally:
@@ -512,7 +509,7 @@ class ConversionEngine(QtCore.QObject):
                     self._inc("scanned")
                     file_queue.put(entry.path)  # dolu ise burada bekler (bounded)
         except Exception as e:
-            self._log(f"TARAMA HATASI (beklenmeyen, tarama erken sonlandirildi): {e}")
+            self._log(f"TARAMA HATASI (beklenmeyen, tarama erken sonlandırıldı): {e}")
         finally:
             for _ in range(self.worker_count):
                 file_queue.put(None)
@@ -527,7 +524,7 @@ class ConversionEngine(QtCore.QObject):
                 cutoff_str = datetime.fromtimestamp(cutoff_ts).strftime("%Y-%m-%d %H:%M")
                 self.reset_counters()
                 self.pass_started.emit(cutoff_str)
-                self._log(f"Tarama basladi. Esik tarih: {cutoff_str} (bu tarihten eski dosyalar donusturulecek)")
+                self._log(f"Tarama başladı. Eşik tarih: {cutoff_str} (bu tarihten eski dosyalar dönüştürülecek)")
 
                 file_queue = queue.Queue(maxsize=self.worker_count * 50)
                 workers = [
@@ -548,23 +545,23 @@ class ConversionEngine(QtCore.QObject):
                 c = self.snapshot_counters()
                 # tur sonu ozeti - verbose ayarindan bagimsiz, her zaman gosterilir
                 self._log(
-                    f"TUR TAMAMLANDI. Taranan: {c['scanned']}  Donusturulen: {c['converted']}  "
+                    f"TUR TAMAMLANDI. Taranan: {c['scanned']}  Dönüştürülen: {c['converted']}  "
                     f"Atlanan: {c['skipped']}  Hata: {c['errors']}"
                 )
 
                 if not self.continuous or self.stop_event.is_set():
                     break
 
-                self._log(f"Sonraki tur icin {self.interval_minutes} dakika bekleniyor...")
+                self._log(f"Sonraki tur için {self.interval_minutes} dakika bekleniyor...")
                 self.stop_event.wait(self.interval_minutes * 60)  # Durdur'da aninda uyanir
         except Exception as e:
             # Kritik guvenlik agi: --windowed olarak paketlenmis exe'de konsol
             # OLMADIGI icin yakalanmayan bir exception hicbir yerde gorunmeden
             # sessizce kaybolur. Burada yakalayip GUI log paneline (kullanicinin
             # gorebilecegi TEK yer) acikca yaziyoruz.
-            self._log(f"KRITIK HATA (islem beklenmedik sekilde durdu): {e}")
+            self._log(f"KRİTİK HATA (işlem beklenmedik şekilde durdu): {e}")
         finally:
-            self._log("Islem durduruldu.")
+            self._log("İşlem durduruldu.")
             self._close_error_csv()
             self.all_finished.emit()
 
@@ -591,142 +588,127 @@ SETTINGS_HELP_HTML = """
   code { background:#eee; padding:1px 4px; border-radius:3px; }
 </style>
 
-<h3>Klasor</h3>
-<p>WAV dosyalarinin bulundugu kok klasor. Alt klasorlerde de arama yapmasi
-icin <b>"Alt klasorleri de tara"</b> kutucugunu isaretli birakin.</p>
+<h3>Klasör</h3>
+<p>WAV dosyalarının bulunduğu kök klasör. Alt klasörlerde de arama yapması
+için <b>"Alt klasörleri de tara"</b> kutucuğunu işaretli bırakın.</p>
 
-<h3>Calisma Modu &ndash; Tek seferlik</h3>
-<p>Sectiginiz <b>tarihten daha eski</b> (dosyanin son degistirilme tarihine
-gore) tum WAV dosyalarini bir kez tarar, donusturur ve islem biter.
-Ornegin 01.01.2025 secerseniz, o tarihten once degistirilmis WAV'lar
-islenir; daha yeni dosyalara dokunulmaz.</p>
+<h3>Çalışma Modu &ndash; Tek seferlik</h3>
+<p>Seçtiğiniz <b>tarihten daha eski</b> (dosyanın son değiştirilme tarihine
+göre) tüm WAV dosyalarını bir kez tarar, dönüştürür ve işlem biter.
+Örneğin 01.01.2025 seçerseniz, o tarihten önce değiştirilmiş WAV'lar
+işlenir; daha yeni dosyalara dokunulmaz.</p>
 
-<h3>Calisma Modu &ndash; Surekli calis</h3>
-<p>Sabit bir tarih yerine <b>"su gunden eski"</b> mantigiyla calisir.
-Ornegin "10 gun" girerseniz, program her turda "su an - 10 gun" esigini
-yeniden hesaplar ve o tarihten eski tum dosyalari donusturur. Bir tur
-bitince <b>Tarama araligi</b> kadar bekler, sonra esigi yeniden hesaplayip
-tekrar tarar. Bu, sonsuz bir dongudur; siz <b>Durdur</b> butonuna basana
-kadar calismaya devam eder. Sunucu her zaman acik kalip surekli yeni
-gelen dosyalari belirli bir yastan sonra otomatik sikistirmak icin
+<h3>Çalışma Modu &ndash; Sürekli çalış</h3>
+<p>Sabit bir tarih yerine <b>"şu günden eski"</b> mantığıyla çalışır.
+Örneğin "10 gün" girerseniz, program her turda "şu an - 10 gün" eşiğini
+yeniden hesaplar ve o tarihten eski tüm dosyaları dönüştürür. Bir tur
+bitince <b>Tarama aralığı</b> kadar bekler, sonra eşiği yeniden hesaplayıp
+tekrar tarar. Bu, sonsuz bir döngüdür; siz <b>Durdur</b> butonuna basana
+kadar çalışmaya devam eder. Sunucu her zaman açık kalıp sürekli yeni
+gelen dosyaları belirli bir yaştan sonra otomatik sıkıştırmak için
 idealdir.</p>
 
-<h3>Kaynak (orijinal) WAV dosyalarini sil</h3>
-<p>Isaretlenirse, bir dosya <b>basariyla</b> FLAC'a donusturuldukten
-(ffmpeg sifir hata koduyla bitip cikti dosyasi dogrulandiktan) SONRA
-orijinal WAV dosyasi diskten silinir. Donusturme basarisiz olursa
-orijinal dosyaya dokunulmaz. Isaretli degilse WAV dosyalari FLAC'in
-yaninda oldugu gibi kalir (disk alani kazanci olmaz, sadece FLAC kopyasi
-da olusur).</p>
-
-<h3>Paralel islem (worker sayisi)</h3>
-<p>Ayni anda kac dosyanin <b>eszamanli</b> olarak ffmpeg ile
-donusturulecegini belirler; her worker kendi ffmpeg surecini calistirir.
-Varsayilan deger CPU cekirdek sayisidir.</p>
+<h3>Paralel işlem</h3>
+<p>Aynı anda kaç dosyanın <b>eşzamanlı</b> olarak ffmpeg ile
+dönüştürüleceğini belirler; her biri kendi ffmpeg sürecini çalıştırır.
+Varsayılan değer CPU çekirdek sayısıdır.</p>
 <ul>
-<li>Yerel SSD'de calisiyorsaniz: cekirdek sayisi civari (hatta biraz
-ustu) verimlidir.</li>
-<li>Ag paylasimi (SMB/NFS) veya yavas disk kullaniyorsaniz: daha dusuk
-bir deger (orn. 4-8) disk kuyrugunun tikanmasini onleyip genelde daha
-hizli sonuc verir.</li>
+<li>Yerel SSD'de çalışıyorsanız: çekirdek sayısı civarı (hatta biraz
+üstü) verimlidir.</li>
+<li>Ağ paylaşımı (SMB/NFS) veya yavaş disk kullanıyorsanız: daha düşük
+bir değer (örn. 4-8) disk kuyruğunun tıkanmasını önleyip genelde daha
+hızlı sonuç verir.</li>
 </ul>
-<p>Emin degilseniz kucuk bir ornek grupla (birkac bin dosya) farkli
-degerleri deneyip sunucunuzdaki gercek darbogazi (CPU mu disk mi)
-gormeniz onerilir.</p>
+<p>Emin değilseniz küçük bir örnek grupla (birkaç bin dosya) farklı
+değerleri deneyip sunucunuzdaki gerçek darboğazı (CPU mu disk mi)
+görmeniz önerilir.</p>
 
-<h3>Sikistirma (0-8)</h3>
-<p>ffmpeg'in FLAC sikistirma seviyesidir. FLAC her zaman <b>kayipsizdir</b>
-(lossless) &ndash; hangi seviyeyi secerseniz secin ses kalitesinde HICBIR
-fark olmaz; sadece dosya boyutu ve donusturme suresi degisir.</p>
+<h3>Sıkıştırma (0-8)</h3>
+<p>FLAC sıkıştırma seviyesidir. FLAC her zaman <b>kayıpsızdır</b>
+(lossless) &ndash; hangi seviyeyi seçerseniz seçin ses kalitesinde HİÇBİR
+fark olmaz; sadece dosya boyutu ve dönüştürme süresi değişir.</p>
 <ul>
-<li><b>0</b>: en hizli, en az sikistirma (en buyuk dosya)</li>
-<li><b>8</b>: en yavas, en fazla sikistirma (en kucuk dosya)</li>
+<li><b>0</b>: en hızlı, en az sıkıştırma (en büyük dosya)</li>
+<li><b>8</b>: en yavaş, en fazla sıkıştırma (en küçük dosya)</li>
 </ul>
-<p>0 ile 8 arasindaki boyut farki genelde sadece %5-10 civarindadir, ama
-8. seviye 0. seviyeye gore birkac kat daha uzun surebilir. Milyonlarca
-dosyada <b>2-5 arasi</b> onerilir; depolama alani kritikse daha yuksek
-secilebilir ama toplam sure ciddi artar.</p>
+<p>0 ile 8 arasındaki boyut farkı genelde sadece %5-10 civarındadır, ama
+8. seviye 0. seviyeye göre birkaç kat daha uzun sürebilir. Milyonlarca
+dosyada <b>2-5 arası</b> önerilir; depolama alanı kritikse daha yüksek
+seçilebilir ama toplam süre ciddi artar.</p>
 
-<h3>Tum dosya hareketlerini logla</h3>
-<p>Acikken her donusturulen/atlanan/silinen dosya icin ayri bir log satiri
-yazilir (orn. <code>DONUSTURULDU: C:\\...\\ornek.wav</code>). Milyonlarca
-dosyada bu, ekran performansini ve okunabilirligi dusurebilir.</p>
-<p>Kapatildiginda bu tekil satirlar yazilmaz; ancak <b>hatalar her zaman
-gosterilir</b> ve asagidaki "Ozet log araligi" ayari sayesinde ilerleme
-duzenli olarak goruntulenmeye devam eder.</p>
+<h3>Özet log aralığı</h3>
+<p>Kaç dosya işlendiğinde ("Taranan / Dönüştürülen / Atlanan / Hata")
+özet satırının log ekranına yazılacağını belirler. Bu satırlar "Her
+dosyayı ayrı satırda logla" KAPALI olsa bile her zaman gösterilir. Ayrıca
+her turun sonunda otomatik olarak bir TUR TAMAMLANDI özeti yazılır.</p>
 
-<h3>Ozet log araligi</h3>
-<p>Kac dosya islendiginde ("Taranan / Donusturulen / Atlanan / Hata")
-ozet satirinin log ekranina yazilacagini belirler. Bu satirlar "Tum
-dosya hareketlerini logla" KAPALI olsa bile her zaman gosterilir, boylece
-"kac dosya donusturuldu" bilgisini her zaman takip edebilirsiniz. Ayrica
-her turun sonunda da otomatik olarak bir TUR TAMAMLANDI ozeti yazilir.</p>
+<h3>Orijinal zaman damgasını FLAC'a aktar</h3>
+<p>İşaretliyse, oluşturulan FLAC dosyasının değiştirilme/erişim tarihi
+orijinal WAV dosyasıyla aynı yapılır (dosya "yeni oluşturulmuş" gibi
+görünmez, arşiv/denetim tarihini korur). Kapatılırsa FLAC dosyası kendi
+oluşturulma anındaki tarihi taşır.</p>
 
-<h3>Diskteki tam log dosyasi</h3>
-<p>Ekrandaki log gosterimi belli bir satir sayisiyla sinirlidir (bellek
-icin), ancak <b>tum</b> islemler ayrica diske de yazilir:
-<code>%USERPROFILE%\\.wav2flac_logs\\wav2flac.log</code> (donen/rotating
-dosya). Bu klasoru Yardim menusundeki "Log Klasorunu Ac" ile
-acabilirsiniz.</p>
+<h3>Her dosyayı ayrı satırda logla</h3>
+<p>Açıkken her dönüştürülen/atlanan/silinen dosya için ayrı bir log satırı
+yazılır (örn. <code>DÖNÜŞTÜRÜLDÜ: C:\\...\\ornek.wav</code>). Milyonlarca
+dosyada bu, ekran performansını ve okunabilirliği düşürebilir.
+Kapatıldığında bu tekil satırlar yazılmaz; ancak <b>hatalar her zaman
+gösterilir</b> ve özet satırları yazılmaya devam eder.</p>
 
-<h3>Silmeden once FLAC'i dogrula</h3>
-<p><b>SADECE "Kaynak (orijinal) WAV dosyalarini sil" isaretliyken etkilidir</b>
-(diger durumda kutucuk otomatik olarak devre disi/gri gorunur, cunku
-zaten silinecek bir sey yoktur). Isaretliyse, ffmpeg basariyla bitse bile
-silme islemi hemen yapilmaz: program WAV ve olusan FLAC dosyalarinin
-surelerini once dosya basliklarindan (hizli), gerekirse <b>ffprobe</b> ile
-karsilastirir. Sureler uyusmuyorsa (bozuk/eksik
-donusturme durumu), olusan hatali FLAC dosyasi silinir, <b>orijinal WAV
-korunur</b> ve durum hata olarak kaydedilir. Bu, geri donusu olmayan veri
-kaybina karsi ek bir guvenlik katmanidir. ffprobe bulunamazsa bu ozellik
-calisamaz; Baslat'a bastiginizda sizi uyarir ve dogrulamayi o calisma
-icin devre disi birakir.</p>
-
-<h3>Orijinal zaman damgasini FLAC'a aktar</h3>
-<p>Isaretliyse, olusturulan FLAC dosyasinin degistirilme/erisim tarihi
-orijinal WAV dosyasiyla ayni yapilir (dosya "yeni olusturulmus" gibi
-gorunmez, arsiv/denetim tarihini korur). Kapatilirsa FLAC dosyasi kendi
-olusturulma anindaki tarihi tasir.</p>
+<h3>Dönüştürülen orijinal WAV dosyalarını sil</h3>
+<p><b>Geri alınamaz.</b> İşaretlenirse, bir dosya başarıyla FLAC'a
+dönüştürüldükten SONRA orijinal WAV dosyası diskten silinir. Silmeden önce
+her FLAC <b>doğrulanır</b>: WAV ve FLAC süreleri önce dosya başlıklarından
+(hızlı), gerekirse <b>ffprobe</b> ile karşılaştırılır. Süreler uyuşmuyorsa
+veya doğrulanamıyorsa oluşan FLAC silinir, <b>orijinal WAV korunur</b> ve
+durum hata olarak kaydedilir. Başlat'a basıldığında silme için ayrıca onay
+istenir. İşaretli değilse WAV dosyaları FLAC'ın yanında olduğu gibi kalır
+(disk alanı kazancı olmaz, sadece FLAC kopyası da oluşur).</p>
 
 <h3>Duraklat / Devam Et</h3>
-<p><b>Duraklat</b>'a basildiginda, o an isleme alinmamis dosyalar icin
-yeni islem baslatilmaz; halihazirda calismakta olan ffmpeg islemleri
-kesilmeden tamamlanir (boylece yarim dosya olusmaz). Tarama islemi de
-kuyruk dolacagi icin kendiliginden durur. <b>Devam Et</b>'e basildiginda
-kaldigi yerden devam eder. <b>Durdur</b> ise duraklatmadan farkli olarak
-mevcut turu tamamen sonlandirir ve (surekli modda) sonraki turlari
-baslatmaz.</p>
+<p><b>Duraklat</b>'a basıldığında, o an işleme alınmamış dosyalar için
+yeni işlem başlatılmaz; hâlihazırda çalışmakta olan ffmpeg işlemleri
+kesilmeden tamamlanır (böylece yarım dosya oluşmaz). Tarama işlemi de
+kuyruk dolacağı için kendiliğinden durur. <b>Devam Et</b>'e basıldığında
+kaldığı yerden devam eder. <b>Durdur</b> ise duraklatmadan farklı olarak
+mevcut turu tamamen sonlandırır ve (sürekli modda) sonraki turları
+başlatmaz.</p>
 
-<h3>Hiz / Tahmini Sure gostergesi</h3>
-<p>Istatistiklerin altinda gosterilen "Hiz" degeri, son birkac saniyedeki
-islenen dosya sayisina bakarak hesaplanan dosya/saniye degeridir.
-"Tahmini kalan sure" ise SADECE o ana kadar taranmis ama henuz islenmemis
-dosyalar (bilinen kuyruk) icin bir tahmindir; tarama devam ettigi surece
-gercek toplam dosya sayisi onceden bilinmedigi icin (bu, milyonlarca
-dosyada bellek tasarrufu saglayan tasarimin bir sonucudur) bu deger
-zamanla degisebilir/guncellenebilir.</p>
+<h3>Hız / Tahmini Süre göstergesi</h3>
+<p>İstatistiklerin altında gösterilen "Hız" değeri, son birkaç saniyedeki
+işlenen dosya sayısına bakarak hesaplanan dosya/saniye değeridir.
+"Tahmini kalan süre" ise SADECE o ana kadar taranmış ama henüz işlenmemiş
+dosyalar (bilinen kuyruk) için bir tahmindir; tarama devam ettiği sürece
+gerçek toplam dosya sayısı önceden bilinmediği için (bu, milyonlarca
+dosyada bellek tasarrufu sağlayan tasarımın bir sonucudur) bu değer
+zamanla değişebilir.</p>
 
 <h3>Hata Raporu (CSV)</h3>
-<p>Donusturme, dogrulama veya silme sirasinda olusan HER hata otomatik
-olarak <code>%USERPROFILE%\\.wav2flac_logs\\hatalar.csv</code> dosyasina
-(tarih, dosya yolu, hata turu, detay sutunlariyla) satir satir eklenir.
-Bu dosyayi Yardim menusundeki "Hata Raporunu (CSV) Ac" ile Excel/Notepad
-gibi bir programda acabilirsiniz. Islem devam ederken de dosya surekli
-guncellenir, ayrica bir "disa aktarma" adimina gerek yoktur.</p>
+<p>Dönüştürme, doğrulama veya silme sırasında oluşan HER hata otomatik
+olarak <code>%USERPROFILE%\\.wav2flac_logs\\hatalar.csv</code> dosyasına
+(tarih, dosya yolu, hata türü, detay sütunlarıyla) satır satır eklenir.
+Bu dosyayı Yardım menüsündeki "Hata Raporunu (CSV) Aç" ile Excel/Notepad
+gibi bir programda açabilirsiniz. İşlem devam ederken de dosya sürekli
+güncellenir, ayrıca bir "dışa aktarma" adımına gerek yoktur.</p>
 
-<h3>Ayarlarin hatirlanmasi</h3>
-<p>Girdiginiz klasor, mod, tarih/gun, worker sayisi, sikistirma seviyesi
-ve tum diger secenekler uygulama kapatildiginda otomatik kaydedilir;
-bir sonraki acilista kaldiginiz yerden devam edersiniz. Ayri bir "kaydet"
-islemi yapmaniza gerek yoktur.</p>
+<h3>Diskteki tam log dosyası</h3>
+<p>Ekrandaki log gösterimi belli bir satır sayısıyla sınırlıdır (bellek
+için), ancak <b>tüm</b> işlemler ayrıca diske de yazılır:
+<code>%USERPROFILE%\\.wav2flac_logs\\wav2flac.log</code> (dönen/rotating
+dosya). Bu klasörü Yardım menüsündeki "Log Klasörünü Aç" ile
+açabilirsiniz.</p>
+
+<h3>Ayarların hatırlanması</h3>
+<p>Girdiğiniz klasör, mod, tarih/gün, paralel işlem sayısı, sıkıştırma
+seviyesi ve tüm diğer seçenekler uygulama kapatıldığında otomatik
+kaydedilir; bir sonraki açılışta kaldığınız yerden devam edersiniz.</p>
 """
-
 
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"WAV -> FLAC Toplu Donusturucu v{APP_VERSION}")
+        self.setWindowTitle(f"WAV → FLAC Toplu Dönüştürücü v{APP_VERSION}")
         self.setMinimumWidth(620)
 
         icon_path = get_resource_path("app_icon.ico")
@@ -765,17 +747,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
         help_menu.addSeparator()
 
-        log_folder_action = QtGui.QAction("Log Klasorunu Ac", self)
+        log_folder_action = QtGui.QAction("Log Klasörünü Aç", self)
         log_folder_action.triggered.connect(self._open_log_folder)
         help_menu.addAction(log_folder_action)
 
-        error_csv_action = QtGui.QAction("Hata Raporunu (CSV) Ac", self)
+        error_csv_action = QtGui.QAction("Hata Raporunu (CSV) Aç", self)
         error_csv_action.triggered.connect(self._open_error_csv_file)
         help_menu.addAction(error_csv_action)
 
         help_menu.addSeparator()
 
-        about_action = QtGui.QAction("Hakkinda...", self)
+        about_action = QtGui.QAction("Hakkında...", self)
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
 
@@ -790,8 +772,8 @@ class MainWindow(QtWidgets.QMainWindow):
         os.makedirs(log_dir, exist_ok=True)
         if not os.path.exists(csv_path):
             QtWidgets.QMessageBox.information(
-                self, "Hata raporu bulunamadi",
-                "Henuz bir hata kaydi olusmadi. Islem calistiginda hatalar "
+                self, "Hata raporu bulunamadı",
+                "Henüz bir hata kaydı oluşmadı. İşlem çalıştığında hatalar "
                 f"burada birikecek:\n{csv_path}",
             )
             return
@@ -800,11 +782,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _show_about(self):
         QtWidgets.QMessageBox.about(
             self,
-            "Hakkinda",
-            f"<b>WAV &rarr; FLAC Toplu Donusturucu</b><br>Surum {APP_VERSION}<br><br>"
-            "Buyuk hacimli WAV arsivlerini kayipsiz FLAC formatina donusturmek "
-            "icin RAM ve hiz odakli tasarlanmis bir arac. Bugra <br><br>"
-            "Donusturme motoru: ffmpeg",
+            "Hakkında",
+            f"<b>WAV &rarr; FLAC Toplu Dönüştürücü</b><br>Sürüm {APP_VERSION}<br><br>"
+            "Büyük hacimli WAV arşivlerini kayıpsız FLAC formatına dönüştürmek "
+            "için RAM ve hız odaklı tasarlanmış bir araç. Bugra <br><br>"
+            "Dönüştürme motoru: ffmpeg",
         )
 
     def _show_settings_help(self):
@@ -850,14 +832,14 @@ class MainWindow(QtWidgets.QMainWindow):
         path = find_tool("ffmpeg")
         self.engine.ffmpeg_path = path
         if path is None:
-            self._append_startup_log("UYARI: ffmpeg bulunamadi. Donusturme islemi calismayacaktir.")
+            self._append_startup_log("UYARI: ffmpeg bulunamadı. Dönüştürme işlemi çalışmayacaktır.")
             QtWidgets.QMessageBox.warning(
                 self,
-                "ffmpeg bulunamadi",
-                "ffmpeg ne exe ile birlikte (gomulu) ne de PATH icinde bulunamadi.\n"
-                "Donusturme islemi calismayacaktir.\n\n"
-                "Bu exe ffmpeg ile birlikte paketlenmediyse, ffmpeg'i kurup PATH'e "
-                "ekleyin (https://ffmpeg.org/download.html).",
+                "ffmpeg bulunamadı",
+                "ffmpeg ne exe ile birlikte (gömülü) ne de PATH içinde bulunamadı.\n"
+                "Dönüştürme işlemi çalışmayacaktır.\n\n"
+                "Bu exe ffmpeg ile birlikte paketlenmediyse, ffmpeg.exe'yi programın "
+                "yanına koyun veya PATH'e ekleyin (https://ffmpeg.org/download.html).",
             )
         else:
             self._append_startup_log(f"ffmpeg bulundu: {path}")
@@ -867,8 +849,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.engine.ffprobe_path = path
         if path is None:
             self._append_startup_log(
-                "UYARI: ffprobe bulunamadi. 'Silmeden once dogrula' secenegi "
-                "kullanilamayacak (ffmpeg donusturmesi bundan etkilenmez)."
+                "UYARI: ffprobe bulunamadı. Süresi dosya başlığından okunamayan WAV'lar "
+                "(örn. u-law) doğrulanamaz; silme açıksa bu dosyalar silinmez."
             )
         else:
             self._append_startup_log(f"ffprobe bulundu: {path}")
@@ -884,24 +866,24 @@ class MainWindow(QtWidgets.QMainWindow):
         # --- Klasor secimi ---
         path_row = QtWidgets.QHBoxLayout()
         self.path_edit = QtWidgets.QLineEdit()
-        self.path_edit.setPlaceholderText("WAV dosyalarinin bulundugu klasor...")
-        browse_btn = QtWidgets.QPushButton("Gozat...")
+        self.path_edit.setPlaceholderText("WAV dosyalarının bulunduğu klasör...")
+        browse_btn = QtWidgets.QPushButton("Gözat...")
         browse_btn.clicked.connect(self._browse_folder)
-        path_row.addWidget(QtWidgets.QLabel("Klasor:"))
+        path_row.addWidget(QtWidgets.QLabel("Klasör:"))
         path_row.addWidget(self.path_edit, 1)
         path_row.addWidget(browse_btn)
         layout.addLayout(path_row)
 
-        self.recursive_chk = QtWidgets.QCheckBox("Alt klasorleri de tara")
+        self.recursive_chk = QtWidgets.QCheckBox("Alt klasörleri de tara")
         self.recursive_chk.setChecked(True)
         layout.addWidget(self.recursive_chk)
 
         # --- Mod secimi ---
-        mode_group = QtWidgets.QGroupBox("Calisma Modu")
+        mode_group = QtWidgets.QGroupBox("Çalışma Modu")
         mode_layout = QtWidgets.QVBoxLayout(mode_group)
 
-        self.mode_once_radio = QtWidgets.QRadioButton("Tek seferlik: belirli tarihten eski dosyalari donustur")
-        self.mode_continuous_radio = QtWidgets.QRadioButton("Surekli calis: X gunden eski dosyalari periyodik olarak donustur")
+        self.mode_once_radio = QtWidgets.QRadioButton("Tek seferlik: belirli tarihten eski dosyaları dönüştür")
+        self.mode_continuous_radio = QtWidgets.QRadioButton("Sürekli çalış: X günden eski dosyaları periyodik olarak dönüştür")
         self.mode_once_radio.setChecked(True)
         mode_layout.addWidget(self.mode_once_radio)
 
@@ -919,14 +901,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         cont_row = QtWidgets.QHBoxLayout()
         cont_row.addSpacing(20)
-        cont_row.addWidget(QtWidgets.QLabel("Su gunden eski dosyalar:"))
+        cont_row.addWidget(QtWidgets.QLabel("Şu günden eski dosyalar:"))
         self.days_spin = QtWidgets.QSpinBox()
         self.days_spin.setRange(1, 3650)
         self.days_spin.setValue(10)
-        self.days_spin.setSuffix(" gun")
+        self.days_spin.setSuffix(" gün")
         cont_row.addWidget(self.days_spin)
         cont_row.addSpacing(15)
-        cont_row.addWidget(QtWidgets.QLabel("Tarama araligi:"))
+        cont_row.addWidget(QtWidgets.QLabel("Tarama aralığı:"))
         self.interval_spin = QtWidgets.QSpinBox()
         self.interval_spin.setRange(1, 1440)
         self.interval_spin.setValue(60)
@@ -940,92 +922,68 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mode_once_radio.toggled.connect(self._update_mode_widgets)
         self._update_mode_widgets()
 
-        # --- Secenekler ---
-        opts_group = QtWidgets.QGroupBox("Secenekler")
-        opts_layout = QtWidgets.QHBoxLayout(opts_group)
+        # --- Secenekler (eski Secenekler + Guvenlik + Loglama gruplari tek grupta) ---
+        opts_group = QtWidgets.QGroupBox("Seçenekler")
+        opts_layout = QtWidgets.QVBoxLayout(opts_group)
 
-        self.delete_chk = QtWidgets.QCheckBox("Donusturulen orijinal WAV dosyalarini sil")
-        opts_layout.addWidget(self.delete_chk)
-        opts_layout.addSpacing(15)
-        opts_layout.addWidget(QtWidgets.QLabel("Paralel islem:"))
+        row1 = QtWidgets.QHBoxLayout()
+        row1.addWidget(QtWidgets.QLabel("Paralel işlem:"))
         self.workers_spin = QtWidgets.QSpinBox()
         self.workers_spin.setRange(1, 64)
         self.workers_spin.setValue(max(1, os.cpu_count() or 4))
-        opts_layout.addWidget(self.workers_spin)
-
-        opts_layout.addSpacing(15)
-        opts_layout.addWidget(QtWidgets.QLabel("Sikistirma (0-8):"))
+        row1.addWidget(self.workers_spin)
+        row1.addSpacing(15)
+        row1.addWidget(QtWidgets.QLabel("Sıkıştırma (0-8):"))
         self.compression_spin = QtWidgets.QSpinBox()
         self.compression_spin.setRange(0, 8)
         self.compression_spin.setValue(5)
-        opts_layout.addWidget(self.compression_spin)
-
-        opts_layout.addStretch(1)
-        layout.addWidget(opts_group)
-
-        # --- Guvenlik / Butunluk ---
-        safety_group = QtWidgets.QGroupBox("Guvenlik / Butunluk")
-        safety_layout = QtWidgets.QHBoxLayout(safety_group)
-
-        self.verify_chk = QtWidgets.QCheckBox("Silmeden once FLAC'i dogrula (ffprobe ile sure karsilastirmasi)")
-        self.verify_chk.setChecked(True)
-        self.verify_chk.setToolTip(
-            "SADECE 'Kaynak WAV dosyalarini sil' isaretliyken etkilidir. ffmpeg "
-            "basariyla bitse bile, WAV ve FLAC surelerini ffprobe ile karsilastirarak "
-            "bozuk/eksik donusturmeleri yakalar. Uyusmazlik varsa hatali FLAC silinir, "
-            "orijinal WAV KORUNUR ve hata olarak kaydedilir. Her dosya icin ekstra bir "
-            "islem gerektirdiginden hafif bir hiz maliyeti vardir. Silme kapaliyken "
-            "zaten silinecek bir sey olmadigindan bu adim calistirilmaz."
-        )
-        safety_layout.addWidget(self.verify_chk)
-
-        safety_layout.addSpacing(15)
-        self.preserve_ts_chk = QtWidgets.QCheckBox("Orijinal zaman damgasini FLAC'a aktar")
-        self.preserve_ts_chk.setChecked(True)
-        self.preserve_ts_chk.setToolTip(
-            "Isaretliyse, olusturulan FLAC dosyasinin degistirilme/erisim "
-            "tarihi orijinal WAV dosyasiyla ayni yapilir (arsiv/denetim "
-            "amacli tarih bilgisini korur)."
-        )
-        safety_layout.addWidget(self.preserve_ts_chk)
-
-        safety_layout.addStretch(1)
-        layout.addWidget(safety_group)
-
-        self.delete_chk.toggled.connect(self._update_verify_enabled)
-        self._update_verify_enabled()
-
-        # --- Loglama secenekleri ---
-        log_group = QtWidgets.QGroupBox("Loglama")
-        log_layout = QtWidgets.QHBoxLayout(log_group)
-
-        self.verbose_log_chk = QtWidgets.QCheckBox("Tum dosya hareketlerini logla (DONUSTURULDU / ATLANDI satirlari)")
-        self.verbose_log_chk.setChecked(True)
-        self.verbose_log_chk.setToolTip(
-            "Kapatirsaniz her dosya icin ayri satir yazilmaz (milyonlarca dosyada "
-            "ekran/performans icin onerilir). Hatalar ve ozet sayimlar her zaman gosterilir."
-        )
-        log_layout.addWidget(self.verbose_log_chk)
-
-        log_layout.addSpacing(15)
-        log_layout.addWidget(QtWidgets.QLabel("Ozet log araligi:"))
+        row1.addWidget(self.compression_spin)
+        row1.addSpacing(15)
+        row1.addWidget(QtWidgets.QLabel("Özet log aralığı:"))
         self.summary_interval_spin = QtWidgets.QSpinBox()
         self.summary_interval_spin.setRange(1, 1000000)
         self.summary_interval_spin.setValue(500)
         self.summary_interval_spin.setSuffix(" dosyada bir")
         self.summary_interval_spin.setToolTip(
-            "Kac dosya islendiginde 'Taranan/Donusturulen/Atlanan/Hata' ozet satiri "
-            "yazilacagini belirler. Bu satirlar 'Tum dosya hareketlerini logla' "
-            "kapali olsa bile her zaman gosterilir."
+            "Kaç dosya işlendiğinde 'Taranan/Dönüştürülen/Atlanan/Hata' özet satırı "
+            "yazılacağını belirler. Bu satırlar her zaman gösterilir."
         )
-        log_layout.addWidget(self.summary_interval_spin)
+        row1.addWidget(self.summary_interval_spin)
+        row1.addStretch(1)
+        opts_layout.addLayout(row1)
 
-        log_layout.addStretch(1)
-        layout.addWidget(log_group)
+        row2 = QtWidgets.QHBoxLayout()
+        self.preserve_ts_chk = QtWidgets.QCheckBox("Orijinal zaman damgasını FLAC'a aktar")
+        self.preserve_ts_chk.setChecked(True)
+        self.preserve_ts_chk.setToolTip(
+            "İşaretliyse, oluşturulan FLAC dosyasının değiştirilme/erişim "
+            "tarihi orijinal WAV dosyasıyla aynı yapılır."
+        )
+        row2.addWidget(self.preserve_ts_chk)
+        row2.addSpacing(15)
+        self.verbose_log_chk = QtWidgets.QCheckBox("Her dosyayı ayrı satırda logla")
+        self.verbose_log_chk.setChecked(True)
+        self.verbose_log_chk.setToolTip(
+            "DÖNÜŞTÜRÜLDÜ / ATLANDI / SİLİNDİ satırlarını yazar. Milyonlarca dosyada "
+            "kapatılması önerilir; hatalar ve özet sayımlar her zaman gösterilir."
+        )
+        row2.addWidget(self.verbose_log_chk)
+        row2.addStretch(1)
+        opts_layout.addLayout(row2)
+
+        self.delete_chk = QtWidgets.QCheckBox("Dönüştürülen orijinal WAV dosyalarını SİL (geri alınamaz)")
+        self.delete_chk.toggled.connect(self._update_delete_style)
+        self.delete_chk.setToolTip(
+            "Silmeden önce her FLAC, WAV ile süre karşılaştırılarak doğrulanır; "
+            "uyuşmazsa WAV korunur ve hata olarak kaydedilir. Başlat'ta ayrıca onay istenir."
+        )
+        opts_layout.addWidget(self.delete_chk)
+
+        layout.addWidget(opts_group)
 
         # --- Baslat / Durdur / Duraklat ---
         btn_row = QtWidgets.QHBoxLayout()
-        self.start_btn = QtWidgets.QPushButton("Baslat")
+        self.start_btn = QtWidgets.QPushButton("Başlat")
         self.start_btn.clicked.connect(self._on_start)
         self.pause_btn = QtWidgets.QPushButton("Duraklat")
         self.pause_btn.clicked.connect(self._on_pause_toggle)
@@ -1039,21 +997,33 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addLayout(btn_row)
 
         # --- Istatistikler ---
-        self.stats_label = QtWidgets.QLabel("Taranan: 0   Donusturulen: 0   Atlanan: 0   Hata: 0")
+        self.stats_label = QtWidgets.QLabel("Taranan: 0   Dönüştürülen: 0   Atlanan: 0   Hata: 0")
         layout.addWidget(self.stats_label)
 
         self.speed_label = QtWidgets.QLabel("")
-        self.speed_label.setStyleSheet("color: #555;")
+        self.speed_label.setStyleSheet("color: #888;")
         layout.addWidget(self.speed_label)
 
         # --- Log konsolu ---
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(5000)  # GUI bellegini sinirla
+        self.log_view.setMinimumHeight(140)
         self.log_view.setStyleSheet(CONSOLE_STYLE)
         layout.addWidget(self.log_view, 1)
 
-        self.resize(680, 560)
+        self.resize(720, 680)
+
+    def _update_delete_style(self, on):
+        # Geri alinamaz tek secenek; isaretliyken kirmizi+kalin. Stylesheet yerine palet:
+        # stylesheet onay kutusunun Windows 11 gorunumunu bozuyor.
+        pal = QtWidgets.QApplication.palette(self.delete_chk)
+        if on:  # sadece WindowText: ButtonText onay isaretini de boyuyor
+            pal.setColor(QtGui.QPalette.WindowText, QtGui.QColor("#e5534b"))
+        self.delete_chk.setPalette(pal)
+        font = self.delete_chk.font()
+        font.setBold(on)
+        self.delete_chk.setFont(font)
 
     def _update_mode_widgets(self):
         once = self.mode_once_radio.isChecked()
@@ -1061,26 +1031,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.days_spin.setEnabled(not once)
         self.interval_spin.setEnabled(not once)
 
-    def _update_verify_enabled(self):
-        # Dogrulama sadece silme acikken anlamlidir (bkz. verify_chk tooltip)
-        delete_on = self.delete_chk.isChecked()
-        self.verify_chk.setEnabled(delete_on)
-        if not delete_on:
-            self.verify_chk.setToolTip(
-                "Etkin degil: 'Kaynak WAV dosyalarini sil' isaretli olmadigi surece "
-                "dogrulamanin bir etkisi yok, zaten silinecek bir sey yok."
-            )
-        else:
-            self.verify_chk.setToolTip(
-                "ffmpeg basariyla bitse bile, WAV ve FLAC surelerini ffprobe ile "
-                "karsilastirarak bozuk/eksik donusturmeleri yakalar. Uyusmazlik "
-                "varsa hatali FLAC silinir, orijinal WAV KORUNUR ve hata olarak "
-                "kaydedilir. Her dosya icin ekstra bir islem gerektirdiginden "
-                "hafif bir hiz maliyeti vardir."
-            )
-
     def _browse_folder(self):
-        d = QtWidgets.QFileDialog.getExistingDirectory(self, "Klasor sec")
+        d = QtWidgets.QFileDialog.getExistingDirectory(self, "Klasör seç")
         if d:
             self.path_edit.setText(d)
 
@@ -1097,7 +1049,6 @@ class MainWindow(QtWidgets.QMainWindow):
         s.setValue("delete_original", self.delete_chk.isChecked())
         s.setValue("workers", self.workers_spin.value())
         s.setValue("compression", self.compression_spin.value())
-        s.setValue("verify_before_delete", self.verify_chk.isChecked())
         s.setValue("preserve_timestamps", self.preserve_ts_chk.isChecked())
         s.setValue("verbose_log", self.verbose_log_chk.isChecked())
         s.setValue("summary_interval", self.summary_interval_spin.value())
@@ -1123,7 +1074,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.delete_chk.setChecked(s.value("delete_original", False, type=bool))
         self.workers_spin.setValue(s.value("workers", max(1, os.cpu_count() or 4), type=int))
         self.compression_spin.setValue(s.value("compression", 5, type=int))
-        self.verify_chk.setChecked(s.value("verify_before_delete", True, type=bool))
         self.preserve_ts_chk.setChecked(s.value("preserve_timestamps", True, type=bool))
         self.verbose_log_chk.setChecked(s.value("verbose_log", True, type=bool))
         self.summary_interval_spin.setValue(s.value("summary_interval", 500, type=int))
@@ -1135,28 +1085,24 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_start(self):
         root = self.path_edit.text().strip()
         if not root or not os.path.isdir(root):
-            QtWidgets.QMessageBox.warning(self, "Gecersiz klasor", "Lutfen gecerli bir klasor secin.")
+            QtWidgets.QMessageBox.warning(self, "Geçersiz klasör", "Lütfen geçerli bir klasör seçin.")
             return
         ffmpeg_path = find_tool("ffmpeg")
         if ffmpeg_path is None:
-            QtWidgets.QMessageBox.critical(self, "ffmpeg bulunamadi", "ffmpeg (gomulu veya PATH'te) bulunamadi.")
+            QtWidgets.QMessageBox.critical(self, "ffmpeg bulunamadı", "ffmpeg (gömülü veya PATH'te) bulunamadı.")
             return
 
-        # Dogrulama sadece silme acikken anlamlidir (engine tarafinda da ayni
-        # kural uygulanir); silme kapaliyken gereksiz ffprobe uyarisi cikmasin.
-        verify_requested = self.verify_chk.isChecked() and self.delete_chk.isChecked()
-        ffprobe_path = find_tool("ffprobe")
-        if verify_requested and ffprobe_path is None:
+        if self.delete_chk.isChecked():
+            scope = " (alt klasörler dahil)" if self.recursive_chk.isChecked() else ""
             resp = QtWidgets.QMessageBox.warning(
-                self, "ffprobe bulunamadi",
-                "Dogrulama secili ama ffprobe bulunamadi (genelde ffmpeg ile ayni "
-                "klasorde gelir). Dogrulama bu calisma icin KAPATILACAK, ffmpeg "
-                "donusturmesi normal sekilde devam edecek.\n\nDevam edilsin mi?",
-                QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel,
+                self, "Orijinal dosyalar silinecek",
+                "Dönüştürülüp doğrulanan WAV dosyaları KALICI OLARAK silinecek:\n"
+                f"{root}{scope}\n\nDevam edilsin mi?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No,
             )
-            if resp != QtWidgets.QMessageBox.Ok:
+            if resp != QtWidgets.QMessageBox.Yes:
                 return
-            verify_requested = False
 
         self.engine.root_path = root
         self.engine.recursive = self.recursive_chk.isChecked()
@@ -1167,8 +1113,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.engine.days_threshold = self.days_spin.value()
         self.engine.interval_minutes = self.interval_spin.value()
         self.engine.ffmpeg_path = ffmpeg_path
-        self.engine.ffprobe_path = ffprobe_path
-        self.engine.verify_before_delete = verify_requested
+        self.engine.ffprobe_path = find_tool("ffprobe")
         self.engine.preserve_timestamps = self.preserve_ts_chk.isChecked()
         self.engine.verbose_file_log = self.verbose_log_chk.isChecked()
         self.engine.summary_log_interval = self.summary_interval_spin.value()
@@ -1181,7 +1126,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._save_settings()
 
         self.log_view.clear()
-        self._append_log(f"Baslatildi. Klasor: {root}")
+        self._append_log(f"Başlatıldı. Klasör: {root}")
 
         self._rate_samples.clear()
 
@@ -1194,7 +1139,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.engine.start()
 
     def _on_stop(self):
-        self._append_log("Durdurma istegi gonderildi, mevcut islemler tamamlanip duracak...")
+        self._append_log("Durdurma isteği gönderildi, mevcut işlemler tamamlanıp duracak...")
         self.stop_btn.setEnabled(False)
         self.pause_btn.setEnabled(False)
         self.engine.stop()
@@ -1213,7 +1158,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.mode_continuous_radio, self.date_edit, self.days_spin,
             self.interval_spin, self.delete_chk, self.workers_spin,
             self.compression_spin, self.verbose_log_chk, self.summary_interval_spin,
-            self.verify_chk, self.preserve_ts_chk,
+            self.preserve_ts_chk,
         ):
             w.setEnabled(enabled)
         if enabled:
@@ -1248,7 +1193,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Calisma bittikten sonra da guncelle; yoksa son 250ms'lik sayimlar ekranda eksik kalir.
         c = self.engine.snapshot_counters()
         self.stats_label.setText(
-            f"Taranan: {c['scanned']}   Donusturulen: {c['converted']}   "
+            f"Taranan: {c['scanned']}   Dönüştürülen: {c['converted']}   "
             f"Atlanan: {c['skipped']}   Hata: {c['errors']}"
         )
 
@@ -1258,7 +1203,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._rate_samples.append((now, processed))
 
             if self.engine.is_paused():
-                self.speed_label.setText("Duraklatildi.")
+                self.speed_label.setText("Duraklatıldı.")
             elif len(self._rate_samples) >= 2:
                 old_t, old_p = self._rate_samples[0]
                 dt = now - old_t
@@ -1269,18 +1214,28 @@ class MainWindow(QtWidgets.QMainWindow):
                     eta_seconds = backlog / rate
                     eta_str = str(timedelta(seconds=int(eta_seconds)))
                     self.speed_label.setText(
-                        f"Hiz: {rate:.1f} dosya/sn   "
-                        f"Tahmini kalan sure (bilinen kuyruk icin, ~{backlog} dosya): {eta_str}"
+                        f"Hız: {rate:.1f} dosya/sn   "
+                        f"Tahmini kalan süre (bilinen kuyruk için, ~{backlog} dosya): {eta_str}"
                     )
                 else:
-                    self.speed_label.setText(f"Hiz: {rate:.1f} dosya/sn")
+                    self.speed_label.setText(f"Hız: {rate:.1f} dosya/sn")
             else:
-                self.speed_label.setText("Hiz hesaplaniyor...")
+                self.speed_label.setText("Hız hesaplanıyor...")
 
     def closeEvent(self, event):
-        self._save_settings()
         if self.engine.is_running():
+            resp = QtWidgets.QMessageBox.question(
+                self, "İşlem sürüyor",
+                "Dönüştürme devam ediyor. Çıkarsanız yarım kalan dosyalar bir "
+                "sonraki çalıştırmada baştan dönüştürülür.\n\nÇıkılsın mı?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No,
+            )
+            if resp != QtWidgets.QMessageBox.Yes:
+                event.ignore()
+                return
             self.engine.stop()
+        self._save_settings()
         event.accept()
 
 
